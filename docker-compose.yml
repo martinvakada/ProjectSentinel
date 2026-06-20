@@ -1,0 +1,53 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      PORT: "8080"
+      PRIMARY_API_URL: "http://toxiproxy:8666"
+      SECONDARY_API_URL: "http://secondary-api:8082"
+      REQUEST_TIMEOUT: "200ms"
+      FAILURE_THRESHOLD: "5"
+      OPEN_DURATION: "10s"
+      TOXIPROXY_ADMIN_URL: "http://toxiproxy:8474"
+      TOXIPROXY_PROXY_NAME: "primary_api"
+      TOXIPROXY_LISTEN: "0.0.0.0:8666"
+      TOXIPROXY_UPSTREAM: "primary-api:8081"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - primary-api
+      - secondary-api
+      - toxiproxy
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_WS_URL: "ws://localhost:8080/ws"
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+  primary-api:
+    build:
+      context: ./primary-api
+    environment:
+      PORT: "8081"
+    ports:
+      - "8081:8081"
+
+  secondary-api:
+    build:
+      context: ./secondary-api
+    environment:
+      PORT: "8082"
+    ports:
+      - "8082:8082"
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    ports:
+      - "8474:8474"
+      - "8666:8666"
