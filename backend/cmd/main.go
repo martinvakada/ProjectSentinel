@@ -37,7 +37,10 @@ func main() {
 		log.Printf("toxiproxy bootstrap skipped: %v", err)
 	}
 
-	hub := ws.NewHub(collector, breaker)
+	hub := ws.NewHub(collector, breaker, ws.Config{
+		BroadcastHz:     cfg.TelemetryBroadcastHz,
+		ClientQueueSize: cfg.TelemetryClientQueueSize,
+	})
 	go hub.Run(ctx)
 
 	proxyService, err := proxy.NewService(proxy.Config{

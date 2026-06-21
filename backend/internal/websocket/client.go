@@ -28,11 +28,7 @@ func Upgrade(w http.ResponseWriter, r *http.Request, hub *Hub, collector connect
 
 	collector.IncrementConnections()
 
-	return &Client{
-		hub:  hub,
-		conn: conn,
-		send: make(chan []byte, 16),
-	}, nil
+	return hub.newClient(conn), nil
 }
 
 func (c *Client) ReadPump() {

@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { useTelemetryStore } from "../store/telemetryStore";
 
 const stateCopy = {
   CLOSED: "Traffic is flowing through the primary API.",
@@ -6,7 +7,10 @@ const stateCopy = {
   HALF_OPEN: "A recovery probe is testing the primary API.",
 };
 
-function CircuitBreakerCard({ state }) {
+const selectState = (state) => state.metrics.state;
+
+function CircuitBreakerCard() {
+  const state = useTelemetryStore(selectState);
   const normalizedState = state || "CLOSED";
 
   return (

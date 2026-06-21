@@ -1,6 +1,20 @@
 import { memo, useMemo } from "react";
+import { shallow } from "zustand/shallow";
+import { useTelemetryStore } from "../store/telemetryStore";
 
-function RouteCard({ route, primaryRequests, secondaryRequests, failedRequests }) {
+const selectRouteMetrics = (state) => ({
+  route: state.metrics.currentRoute,
+  primaryRequests: state.metrics.primaryRequests,
+  secondaryRequests: state.metrics.secondaryRequests,
+  failedRequests: state.metrics.failedRequests,
+});
+
+function RouteCard() {
+  const { route, primaryRequests, secondaryRequests, failedRequests } = useTelemetryStore(
+    selectRouteMetrics,
+    shallow,
+  );
+
   const routeLabel = useMemo(() => {
     switch (route) {
       case "secondary":

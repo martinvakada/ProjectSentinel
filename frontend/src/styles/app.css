@@ -75,7 +75,8 @@ body {
 
 .top-grid,
 .metrics-grid,
-.charts-grid {
+.charts-grid,
+.performance-grid {
   display: grid;
   gap: 18px;
 }
@@ -92,6 +93,11 @@ body {
 
 .charts-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.performance-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 18px;
 }
 
 .panel {
@@ -211,6 +217,18 @@ body {
 .chart-wrap {
   width: 100%;
   height: 260px;
+}
+
+.perf-value {
+  font-size: 1.85rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.perf-note {
+  margin-top: 12px;
+  color: #4b635a;
+  font-size: 0.95rem;
 }
 
 @media (max-width: 980px) {

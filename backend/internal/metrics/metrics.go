@@ -6,6 +6,8 @@ import (
 )
 
 type Snapshot struct {
+	Sequence          uint64  `json:"sequence"`
+	Timestamp         int64   `json:"timestamp"`
 	RPS               int     `json:"rps"`
 	State             string  `json:"state"`
 	CurrentRoute      string  `json:"currentRoute"`
@@ -99,6 +101,12 @@ func (c *Collector) DecrementConnections() {
 }
 
 func (c *Collector) Snapshot(state any) Snapshot {
+	var snapshot Snapshot
+	c.FillSnapshot(&snapshot, stringifyState(state))
+	return snapshot
+}
+
+func (c *Collector) FillSnapshot(dst *Snapshot, state string) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -107,17 +115,21 @@ func (c *Collector) Snapshot(state any) Snapshot {
 		averageLatency = float64(c.totalLatency.Milliseconds()) / float64(c.totalRequests)
 	}
 
-	return Snapshot{
-		RPS:               c.rps,
-		State:             stringifyState(state),
-		CurrentRoute:      c.currentRoute,
-		TotalRequests:     c.totalRequests,
-		PrimaryRequests:   c.primaryRequests,
-		SecondaryRequests: c.secondaryRequests,
-		FailedRequests:    c.failedRequests,
-		Latency:           averageLatency,
-		ActiveConnections: c.activeConnections,
-	}
+	dst.RPS = c.rps
+	dst.State = state
+	dst.CurrentRoute = c.currentRoute
+	dst.TotalRequests = c.totalRequests
+	dst.PrimaryRequests = c.primaryRequests
+	dst.SecondaryRequests = c.secondaryRequests
+	dst.FailedRequests = c.failedRequests
+	dst.Latency = averageLatency
+	dst.ActiveConnections = c.activeConnections
+}
+
+func (c *Collector) SnapshotCopy(state string, dst *Snapshot, sequence uint64, timestamp int64) {
+	dst.Sequence = sequence
+	dst.Timestamp = timestamp
+	c.FillSnapshot(dst, state)
 }
 
 func (c *Collector) runRPSLoop() {

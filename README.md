@@ -215,6 +215,79 @@ curl http://localhost:8080/api/data
 - `frontend/src/components/MetricsCard.jsx`: displays individual key metrics.
 - `frontend/src/components/RPSChart.jsx`: renders the RPS chart, latency chart, request distribution chart, and request history chart using Recharts.
 
+## High-Frequency Rendering
+
+Project Sentinel now supports sustained high-frequency telemetry rendering without relying on whole-dashboard rerenders.
+
+### Why WebSockets
+
+WebSockets are used because telemetry is a continuous stream. They avoid the repeated overhead and latency of polling, and they let the frontend decouple message ingestion from browser paint cadence.
+
+### Update Frequency
+
+The backend broadcast cadence is configurable with `TELEMETRY_BROADCAST_HZ`.
+
+- Default: `20`
+- Stress validation targets: `20`, `50`, `100`
+
+The backend reuses one snapshot per tick and one marshaled payload per broadcast cycle, then fans that payload out to all connected clients.
+
+### Zustand Architecture
+
+The frontend uses a centralized Zustand telemetry store.
+
+- The WebSocket bridge writes telemetry batches into Zustand.
+- Components subscribe only to the state slices they need.
+- Cards, charts, route panels, and performance indicators update independently.
+
+### Memoization Strategy
+
+- Presentation components are wrapped in `React.memo`.
+- Derived chart distribution data uses `useMemo`.
+- Stable callbacks are provided with `useCallback`.
+- The dashboard shell remains static while child panels subscribe directly to the store.
+
+### Rolling History Buffer
+
+Telemetry history is bounded and constant-space.
+
+- `VITE_TELEMETRY_HISTORY_LIMIT` controls retained points.
+- `VITE_CHART_SAMPLE_LIMIT` controls how many points are actually rendered.
+- The store keeps only the newest N points and never allows unbounded chart growth.
+
+### Chart Optimization Strategy
+
+The chart pipeline is optimized for high-frequency input by:
+
+- draining inbound telemetry on `requestAnimationFrame`,
+- batching multiple messages into a single store commit,
+- decimating history before rendering,
+- disabling Recharts animation,
+- and splitting chart subscriptions from metric-card subscriptions.
+
+### Virtualization
+
+`react-window` is not used because the application does not render any large table or scrolling list. The performance-sensitive surface is the live telemetry visualization path, and that path is now bounded, sampled, and selectively subscribed.
+
+### Scalability Considerations
+
+- Client send queues are configurable with `TELEMETRY_CLIENT_QUEUE_SIZE`.
+- Slow WebSocket consumers are dropped rather than blocking the hub.
+- The frontend exposes update rate, render rate, queue size, flush rate, and dropped frame indicators to spot pressure early.
+
+### Stress-Test Mode
+
+The frontend includes synthetic telemetry modes for browser validation:
+
+```bash
+cd frontend
+npm run stress:20
+npm run stress:50
+npm run stress:100
+```
+
+These modes generate local telemetry at 20, 50, and 100 updates per second using the same Zustand pipeline as the live WebSocket stream.
+
 ## Notes
 
 - No authentication, database, Redis, Kubernetes, Prometheus, or Grafana were added.

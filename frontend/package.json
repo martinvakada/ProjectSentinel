@@ -6,12 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "stress:20": "vite --mode stress20",
+    "stress:50": "vite --mode stress50",
+    "stress:100": "vite --mode stress100"
   },
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "recharts": "^2.12.7"
+    "recharts": "^2.12.7",
+    "zustand": "^4.5.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",

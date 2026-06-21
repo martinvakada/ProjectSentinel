@@ -12,9 +12,16 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
 	CheckOrigin: func(*http.Request) bool {
 		return true
 	},
+}
+
+type Config struct {
+	BroadcastHz     int
+	ClientQueueSize int
 }
 
 type connectionTracker interface {
@@ -28,15 +35,29 @@ type Hub struct {
 	clients    map[*Client]struct{}
 	collector  *metrics.Collector
 	breaker    *circuitbreaker.Breaker
+	interval   time.Duration
+	queueSize  int
 }
 
-func NewHub(collector *metrics.Collector, breaker *circuitbreaker.Breaker) *Hub {
+func NewHub(collector *metrics.Collector, breaker *circuitbreaker.Breaker, cfg Config) *Hub {
+	broadcastHz := cfg.BroadcastHz
+	if broadcastHz <= 0 {
+		broadcastHz = 20
+	}
+
+	queueSize := cfg.ClientQueueSize
+	if queueSize <= 0 {
+		queueSize = 128
+	}
+
 	return &Hub{
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]struct{}),
 		collector:  collector,
 		breaker:    breaker,
+		interval:   time.Second / time.Duration(broadcastHz),
+		queueSize:  queueSize,
 	}
 }
 
@@ -48,9 +69,20 @@ func (h *Hub) Unregister(client *Client) {
 	h.unregister <- client
 }
 
+func (h *Hub) newClient(conn *websocket.Conn) *Client {
+	return &Client{
+		hub:  h,
+		conn: conn,
+		send: make(chan []byte, h.queueSize),
+	}
+}
+
 func (h *Hub) Run(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(h.interval)
 	defer ticker.Stop()
+
+	var snapshot metrics.Snapshot
+	var sequence uint64
 
 	for {
 		select {
@@ -63,7 +95,10 @@ func (h *Hub) Run(ctx context.Context) {
 				h.collector.DecrementConnections()
 			}
 		case <-ticker.C:
-			payload, err := json.Marshal(h.collector.Snapshot(h.breaker.State()))
+			sequence++
+			h.collector.SnapshotCopy(h.breaker.State().String(), &snapshot, sequence, time.Now().UnixMilli())
+
+			payload, err := json.Marshal(&snapshot)
 			if err != nil {
 				continue
 			}
