@@ -2,6 +2,7 @@ services:
   backend:
     build:
       context: ./backend
+    mem_limit: 128m
     environment:
       PORT: "8080"
       PRIMARY_API_URL: "http://toxiproxy:8666"

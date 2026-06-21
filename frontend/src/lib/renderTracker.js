@@ -1,7 +1,8 @@
 let commitCount = 0;
 let lastSampleTime = 0;
 
-export function recordRenderCommit() {
+export function recordRenderCommit(id, phase) {
+  console.log("Profiler:", id, phase);
   commitCount += 1;
 }
 
