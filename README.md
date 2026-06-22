@@ -2,13 +2,25 @@
 
 Project Sentinel is a high-performance Go API multiplexer that routes traffic to a primary API, trips a custom circuit breaker when the primary becomes unhealthy, falls back to a secondary API, and streams live telemetry to a React dashboard over WebSockets.
 
+## Demo Video
+This video demonstrates the complete Project Sentinel workflow, including:
+
+* Normal traffic routing through the Primary API
+* Real-time dashboard updates via WebSockets
+* Toxiproxy latency injection
+* Circuit Breaker state transitions (`CLOSED → OPEN → HALF_OPEN`)
+* Automatic failover to the Secondary API
+* Recovery after fault removal and traffic restoration
+
+Demo Video: <https://www.loom.com/share/fbc51d9a91b341ea808f91b7022f1a0a>
+
 ## Architecture Diagram
 
 ```text
 Client
   |
   v
-Frontend Dashboard (React + Vite)
+Frontend Dashboard (React)
   |
   | WebSocket (/ws)
   v
@@ -153,143 +165,161 @@ The backend bootstraps the `primary_api` proxy in Toxiproxy during startup.
 
 ## Chaos Testing Instructions
 
-### Inject 500ms latency
+Project Sentinel uses Toxiproxy to simulate failures on the primary API and validate circuit breaker behavior under load.
+
+### Step 1: Generate Baseline Traffic
+
+Verify that requests are successfully routed to the Primary API.
 
 ```bash
-sh scripts/inject-latency.sh
+hey -n 2000 -c 10 http://localhost:8080/api/data
 ```
 
 Expected result:
 
-- Primary requests exceed the `200ms` backend timeout.
-- The circuit breaker reaches the failure threshold.
-- The circuit opens.
-- Traffic shifts to the secondary API.
-- The dashboard updates to show `OPEN` and `Secondary API`.
+* Circuit Breaker state remains `CLOSED`
+* Requests are routed to the Primary API
+* Dashboard shows healthy latency and normal traffic distribution
 
-### Inject 20% packet loss simulation
+---
+
+### Step 2: Inject 1000ms Latency Using Toxiproxy
+
+Introduce artificial latency on the Primary API.
 
 ```bash
-sh scripts/inject-packet-loss.sh
+curl -X POST http://localhost:8474/proxies/primary_api/toxics ^
+-H "User-Agent: toxiproxy-cli" ^
+-H "Content-Type: application/json" ^
+-d "{\"name\":\"latency_test\",\"type\":\"latency\",\"attributes\":{\"latency\":1000}}"
 ```
 
 Expected result:
 
-- Roughly 20% of primary-path requests are interrupted.
-- The breaker accumulates failures and opens when the threshold is reached.
-- Fallback traffic is sent to the secondary API.
-- WebSocket telemetry shows route and state changes in real time.
+* Primary API responses exceed the backend timeout (`200ms`)
+* Requests begin failing against the Primary API
+* Failure count increases in the Circuit Breaker
 
-## How Components Connect
+---
 
-1. The frontend opens a websocket connection to `ws://localhost:8080/ws`.
-2. The backend hub sends a JSON metrics snapshot every second.
-3. The dashboard updates the state cards and charts from those snapshots.
-4. Client requests to `/api/data` first attempt the primary path.
-5. If the primary fails, the breaker records the failure and the backend immediately retries against the secondary API.
-
-## Fallback Testing Guide
-
-To exercise fallback locally without Docker:
-
-1. Start the primary API and backend.
-2. Stop the primary API.
-3. Send repeated requests to `http://localhost:8080/api/data`.
-4. After `5` failed primary attempts, the breaker opens.
-5. Responses continue from the secondary API while the primary is bypassed.
-6. Wait `10` seconds for the breaker to enter `HALF_OPEN`.
-7. Restart the primary API and send another request to close the breaker again.
-
-Example request:
+### Step 3: Generate Traffic During Failure
 
 ```bash
-curl http://localhost:8080/api/data
+hey -n 2000 -c 10 http://localhost:8080/api/data
+```
+
+Expected result:
+
+* Circuit Breaker reaches the failure threshold
+* Circuit Breaker transitions from `CLOSED` → `OPEN`
+* Requests are automatically routed to the Secondary API
+* Dashboard displays:
+
+  * Breaker State: `OPEN`
+  * Active Route: `Secondary API`
+  * Increased failure count
+  * Shift in traffic distribution
+
+---
+
+### Step 4: Remove the Failure
+
+Restore normal connectivity to the Primary API.
+
+```bash
+curl -X DELETE http://localhost:8474/proxies/primary_api/toxics/latency_test ^
+-H "User-Agent: toxiproxy-cli"
+```
+
+Expected result:
+
+* Artificial latency is removed
+* Primary API becomes healthy again
+
+---
+
+### Step 5: Generate Traffic After Recovery
+
+```bash
+hey -n 1000 -c 10 http://localhost:8080/api/data
+```
+
+Expected result:
+
+* After the configured open duration, the breaker enters `HALF_OPEN`
+
+* A probe request is sent to the Primary API
+
+* Successful response causes the breaker to transition:
+
+  ```
+  OPEN → HALF_OPEN → CLOSED
+  ```
+
+* Traffic gradually returns to the Primary API
+
+* Dashboard reflects the recovery in real time
+
+---
+
+### Chaos Test Flow
+
+```text
+Primary API Healthy
+        ↓
+Generate Traffic
+        ↓
+Inject 1000ms Latency (Toxiproxy)
+        ↓
+Primary Requests Timeout (>200ms)
+        ↓
+Circuit Breaker OPEN
+        ↓
+Traffic Routed to Secondary API
+        ↓
+Remove Latency
+        ↓
+HALF_OPEN Probe
+        ↓
+Circuit Breaker CLOSED
+        ↓
+Traffic Returns to Primary API
 ```
 
 ## Frontend Overview
 
-- `frontend/src/hooks/useWebSocket.js`: owns websocket connection, reconnection, and rolling chart history.
-- `frontend/src/components/Dashboard.jsx`: composes the dashboard layout with memoized cards and chart data.
-- `frontend/src/components/CircuitBreakerCard.jsx`: displays breaker state with color-coded status.
-- `frontend/src/components/RouteCard.jsx`: displays the active route and route distribution.
-- `frontend/src/components/MetricsCard.jsx`: displays individual key metrics.
-- `frontend/src/components/RPSChart.jsx`: renders the RPS chart, latency chart, request distribution chart, and request history chart using Recharts.
+-## Frontend Overview
 
-## High-Frequency Rendering
+* `useWebSocket.js` manages the WebSocket connection and receives live telemetry data.
+* `Dashboard.jsx` organizes and displays all dashboard components.
+* `CircuitBreakerCard.jsx` shows the current circuit breaker state (`CLOSED`, `OPEN`, `HALF_OPEN`).
+* `RouteCard.jsx` displays whether traffic is routed to the Primary or Secondary API.
+* `MetricsCard.jsx` shows key metrics such as requests, latency, and failures.
+* `RPSChart.jsx` visualizes request rate, latency, and traffic distribution using Recharts.
 
-Project Sentinel now supports sustained high-frequency telemetry rendering without relying on whole-dashboard rerenders.
+## React Rendering Approach
 
-### Why WebSockets
+### Why WebSockets?
 
-WebSockets are used because telemetry is a continuous stream. They avoid the repeated overhead and latency of polling, and they let the frontend decouple message ingestion from browser paint cadence.
+The dashboard receives live updates from the backend through WebSockets. This provides real-time telemetry without the overhead of repeated API polling.
 
-### Update Frequency
+### State Management
 
-The backend broadcast cadence is configurable with `TELEMETRY_BROADCAST_HZ`.
+The frontend uses Zustand to store telemetry data.
 
-- Default: `20`
-- Stress validation targets: `20`, `50`, `100`
+* WebSocket messages update the Zustand store.
+* Components subscribe only to the data they need.
+* This reduces unnecessary re-renders.
 
-The backend reuses one snapshot per tick and one marshaled payload per broadcast cycle, then fans that payload out to all connected clients.
+### Performance Optimizations
 
-### Zustand Architecture
+To keep the dashboard responsive during heavy traffic:
 
-The frontend uses a centralized Zustand telemetry store.
+* `React.memo` prevents unnecessary component re-renders.
+* `useMemo` is used for derived chart data.
+* Telemetry history is limited to a fixed number of points.
+* Recharts animations are disabled for smoother real-time updates.
 
-- The WebSocket bridge writes telemetry batches into Zustand.
-- Components subscribe only to the state slices they need.
-- Cards, charts, route panels, and performance indicators update independently.
+### Result
 
-### Memoization Strategy
-
-- Presentation components are wrapped in `React.memo`.
-- Derived chart distribution data uses `useMemo`.
-- Stable callbacks are provided with `useCallback`.
-- The dashboard shell remains static while child panels subscribe directly to the store.
-
-### Rolling History Buffer
-
-Telemetry history is bounded and constant-space.
-
-- `VITE_TELEMETRY_HISTORY_LIMIT` controls retained points.
-- `VITE_CHART_SAMPLE_LIMIT` controls how many points are actually rendered.
-- The store keeps only the newest N points and never allows unbounded chart growth.
-
-### Chart Optimization Strategy
-
-The chart pipeline is optimized for high-frequency input by:
-
-- draining inbound telemetry on `requestAnimationFrame`,
-- batching multiple messages into a single store commit,
-- decimating history before rendering,
-- disabling Recharts animation,
-- and splitting chart subscriptions from metric-card subscriptions.
-
-### Virtualization
-
-`react-window` is not used because the application does not render any large table or scrolling list. The performance-sensitive surface is the live telemetry visualization path, and that path is now bounded, sampled, and selectively subscribed.
-
-### Scalability Considerations
-
-- Client send queues are configurable with `TELEMETRY_CLIENT_QUEUE_SIZE`.
-- Slow WebSocket consumers are dropped rather than blocking the hub.
-- The frontend exposes update rate, render rate, queue size, flush rate, and dropped frame indicators to spot pressure early.
-
-### Stress-Test Mode
-
-The frontend includes synthetic telemetry modes for browser validation:
-
-```bash
-cd frontend
-npm run stress:20
-npm run stress:50
-npm run stress:100
-```
-
-These modes generate local telemetry at 20, 50, and 100 updates per second using the same Zustand pipeline as the live WebSocket stream.
-
-## Notes
-
-- No authentication, database, Redis, Kubernetes, Prometheus, or Grafana were added.
-- The circuit breaker is implemented from scratch and does not use any external circuit breaker library.
-- The backend uses the Go standard library for HTTP serving, reverse proxying, and timeouts.
+The dashboard can display real-time metrics, circuit breaker state changes, and traffic routing updates efficiently even under high request loads.
